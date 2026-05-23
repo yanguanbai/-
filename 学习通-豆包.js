@@ -1,0 +1,306 @@
+// ==UserScript==
+// @name         学习通豆包全自动答题
+// @namespace    com.chaoxing.doubao.auto
+// @version      1.0.0
+// @description  修正答案错乱、增加文字/截图按钮、适配SPA自动重载
+// @match        *://*mooc1-api.chaoxing.com/mooc-ans*
+// @match        *://*.doubao.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addValueChangeListener
+// @grant        unsafeWindow
+// @require      https://html2canvas.hertzen.com/dist/html2canvas.min.js
+// @run-at       document-end
+// ==/UserScript==
+
+(function () {
+    'use strict';
+    const win = unsafeWindow;
+
+    // --- SPA 监听与初始化逻辑 ---
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            setTimeout(checkAndInit, 1000); // 延迟执行，等待页面渲染
+        }
+    }).observe(document.body, { childList: true, subtree: true });
+
+    checkAndInit();
+
+    function checkAndInit() {
+        // 清理旧的 UI，防止重复渲染
+        const oldBox = document.querySelector('#ai-box');
+        if (oldBox) oldBox.remove();
+
+        switch (true) {
+            case location.host.includes("chaoxing.com"):
+                initChaoxing();
+                break;
+            case location.host.includes("doubao.com"):
+                initDoubao();
+                break;
+        }
+    }
+
+    // --- 学习通模块 ---
+    function initChaoxing() {
+        let statusDiv, autoNextCheckbox;
+        createUI();
+        listenAnswer();
+
+        function createUI() {
+            const box = document.createElement('div');
+            box.id = 'ai-box';
+            box.style = "position:fixed;top:10%;left:10px;z-index:9999999;padding:12px;background:#fff;border:2px solid #409EFF;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-family:sans-serif;width:220px;font-size:12px;";
+            box.innerHTML = `
+                <div style="font-weight:bold;margin-bottom:8px;">📗 学习通自动答题</div>
+                <button id="btn-init" style="width:100%;padding:6px;margin-bottom:4px;background:#E6A23C;color:white;border:none;border-radius:4px;">初始化规则</button>
+                <button id="btn-send-txt" style="width:100%;padding:6px;margin-bottom:4px;background:#409EFF;color:white;border:none;border-radius:4px;">发送文字</button>
+                <button id="btn-send-img" style="width:100%;padding:6px;margin-bottom:4px;background:#67C23A;color:white;border:none;border-radius:4px;">发送截图</button>
+                <label style="display:flex;align-items:center;margin-top:6px;">
+                    <input type="checkbox" id="autoNext" checked>
+                    <span style="margin-left:4px;">自动下一题</span>
+                </label>
+                <div id="status" style="margin-top:8px;line-height:1.4;color:#666;">状态：就绪</div>
+            `;
+            document.body.appendChild(box);
+            statusDiv = document.getElementById('status');
+            autoNextCheckbox = document.getElementById('autoNext');
+
+            document.getElementById('btn-init').onclick = () => {
+                setStatus("初始化中...", "#409EFF");
+                GM_setValue("cx_ai_result", "");
+                sendSignal({ type: "init" });
+            };
+            document.getElementById('btn-send-txt').onclick = () => sendText();
+            document.getElementById('btn-send-img').onclick = () => sendImg();
+        }
+
+        function setStatus(text, color = "#666") {
+            if(statusDiv) {
+                statusDiv.innerText = text;
+                statusDiv.style.color = color;
+            }
+        }
+
+        function getAllQuestions() {
+            const items = Array.from(document.querySelectorAll('.questionLi'));
+            return items.sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        }
+
+        function sendText() {
+            GM_setValue("cx_ai_result", "");
+            const wrap = document.querySelector('.exam-content') || document.body;
+            const text = wrap.innerText.replace(/\s+/g, ' ').trim();
+            if (text.length > 0) {
+                sendSignal({ type: "txt", data: text });
+                setStatus("文字已发送", "#409EFF");
+            } else {
+                setStatus("未获取到文字", "#F56C6C");
+            }
+        }
+
+        async function sendImg() {
+            GM_setValue("cx_ai_result", "");
+            const wrap = document.querySelector('.exam-content') || document.body;
+            setStatus("截图处理中...", "#409EFF");
+            try {
+                const canvas = await html2canvas(wrap, { useCORS: true, allowTaint: true, scale: 1 });
+                sendSignal({ type: "img", data: canvas.toDataURL('image/png') });
+                setStatus("截图已发送", "#67C23A");
+            } catch (e) {
+                setStatus("截图失败", "#F56C6C");
+            }
+        }
+
+        function sendSignal(data) {
+            GM_setValue("cx_ai_signal", JSON.stringify({...data, ts: Date.now()}));
+        }
+
+        function listenAnswer() {
+            GM_addValueChangeListener("cx_ai_result", (_, oldVal, val) => {
+                if(!val || val === oldVal) return;
+                const [raw] = val.split("|_|");
+                try {
+                    const answers = JSON.parse(raw);
+                    const quesList = getAllQuestions();
+                    answers.forEach((ans, idx) => {
+                        if(ans.intercept) return;
+                        setTimeout(()=>{
+                            if(quesList[idx]) fillAns(ans, quesList[idx]);
+                        }, idx * 1200);
+                    });
+                    if(autoNextCheckbox.checked) setTimeout(nextQuestion, answers.length*1200+2000);
+                }catch(e){
+                    setStatus("答案解析异常","#F56C6C");
+                }
+            });
+        }
+
+        function fillAns(res, block) {
+            const type = res.type + "";
+            const ansArr = res.answer || [];
+            if(["0","1","3"].includes(type)){
+                const opts = block.querySelectorAll("span.num_option");
+                ansArr.forEach(target=>{
+                    opts.forEach(item=>{
+                        const d = item.dataset.data?.trim();
+                        const t = item.textContent.trim();
+                        if(d===target || t===target){
+                            item.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}));
+                            item.dispatchEvent(new MouseEvent("mouseup",{bubbles:true}));
+                            item.click();
+                        }
+                    });
+                });
+                setStatus(`已选${ansArr.join("")}`,"#67C23A");
+            } else if(["2","4"].includes(type)){
+                const content = ansArr.join("\n");
+                const ue = win.UE;
+                const textarea = block.querySelector('textarea[id^="answer"]');
+                if(textarea && ue?.getEditor){
+                    const ed = ue.getEditor(textarea.id);
+                    if(ed?.setContent){
+                        ed.setContent(content);
+                        ed.fireEvent?.("contentChange");
+                        setStatus("简答填写完成","#67C23A");
+                        return;
+                    }
+                }
+                const editDom = block.querySelector("[contenteditable=true]");
+                if(editDom){
+                    editDom.innerText = content;
+                    editDom.dispatchEvent(new Event("input",{bubbles:true}));
+                }else if(textarea){
+                    textarea.value = content;
+                    textarea.dispatchEvent(new Event("input",{bubbles:true}));
+                }
+            }
+        }
+
+        function nextQuestion() {
+            document.activeElement?.blur();
+            const btn = document.querySelector(".nextBtn,.nextChapter") || [...document.querySelectorAll("button,a")].find(el=>/下一/.test(el.innerText));
+            btn?.click();
+        }
+    }
+
+    // --- 豆包模块 ---
+    function initDoubao() {
+        if(document.readyState !== "complete"){
+            window.addEventListener("load",initDoubao);
+            return;
+        }
+        const bindUrl = GM_getValue("cx_exclusive_url","");
+        if(bindUrl !== location.href) return;
+
+        let isWait = false, pollTimer, watchDog, statusDom;
+        createPanel();
+        listenMsg();
+
+        function createPanel() {
+            const p = document.createElement("div");
+            p.style = "position:fixed;bottom:10px;right:10px;z-index:999999;padding:10px;background:#fff;border:2px solid #409EFF;border-radius:6px;font-size:12px;width:240px;";
+            p.innerHTML = `<span id="dbSta" style="font-weight:bold;color:#409EFF">● 待命</span><button id="bindBtn" style="margin-left:8px;padding:2px 6px;border:1px solid #ccc;border-radius:3px;">绑定</button>`;
+            document.body.appendChild(p);
+            statusDom = document.getElementById("dbSta");
+            document.getElementById("bindBtn").onclick = ()=>{
+                GM_setValue("cx_exclusive_url",location.href);
+                alert("绑定成功，刷新生效");
+            };
+        }
+        function setSta(text,color="#409EFF"){
+            if(statusDom) {
+                statusDom.innerText = "● "+text;
+                statusDom.style.color = color;
+            }
+        }
+
+        function getInputBox(){
+            return document.querySelector('textarea.semi-input-textarea')||document.querySelector('textarea[placeholder="发消息..."]');
+        }
+        function writeText(el,txt){
+            const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set;
+            set.call(el,txt);
+            el.dispatchEvent(new Event("input",{bubbles:true}));
+            el.dispatchEvent(new Event("change",{bubbles:true}));
+            return true;
+        }
+        function getSendBtn(){
+            return document.querySelector('button[aria-label="send"]')||document.getElementById("flow-end-msg-send");
+        }
+
+        function listenMsg(){
+            GM_addValueChangeListener("cx_ai_signal",(_,__,val)=>{
+                if(!val)return;
+                try{handleMsg(JSON.parse(val))}catch(e){}
+            });
+        }
+
+        async function handleMsg(data){
+            if(isWait)return;
+            isWait = true;
+            watchDog = setTimeout(()=>{isWait=false;clearInterval(pollTimer);setSta("超时重置","#F56C6C");},60000);
+            const input = getInputBox();
+            if(!input){isWait=false;setSta("无输入框","#F56C6C");return;}
+            let ok = false;
+            if(data.type === "init"){
+                setSta("加载答题规则");
+                const rule = `严格按要求作答：\n1.仅输出JSON，无多余文字符号\n2.单选0 多选1 填空2 判断3 简答4\n3.一题单独一条JSON，严格从上到下顺序输出\n4.标准格式{"type":"0","answer":["B"]}\n5.不会作答输出{"intercept":true}`;
+                ok = writeText(input,rule);
+            }else if(data.type === "img"){
+                setSta("识别图片题目");
+                try{
+                    const [_,b64] = data.data.split(",");
+                    const buf = atob(b64);
+                    const arr = new Uint8Array([...buf].map(c=>c.charCodeAt(0)));
+                    const file = new File([arr],"q.png",{type:"image/png"});
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true}));
+                    ok = true;
+                }catch(e){}
+            }else{
+                setSta("录入文字题目");
+                ok = writeText(input,data.data);
+            }
+            if(!ok){isWait=false;setSta("录入失败","#F56C6C");return;}
+            setTimeout(()=>{
+                const sendBtn = getSendBtn();
+                if(sendBtn){sendBtn.disabled=false;sendBtn.click();setSta("AI解析答题");startCatch();}
+                else{isWait=false;setSta("发送失败","#F56C6C");}
+            },1500);
+        }
+
+        function startCatch(){
+            clearInterval(pollTimer);
+            let lastTxt = "", stable = 0;
+            pollTimer = setInterval(()=>{
+                const box = document.querySelector(".flow-markdown-body,.markdown-body");
+                if(!box)return;
+                const nowTxt = box.innerText.trim();
+                if(nowTxt === lastTxt && nowTxt){
+                    stable++;
+                    if(stable >= 18){
+                        clearInterval(pollTimer);
+                        clearTimeout(watchDog);
+                        isWait = false;
+                        const jsArr = nowTxt.match(/\{[^{}]*\}/g)?.filter(v=>v.includes('"type"'))||[];
+                        const resStr = `[${jsArr.join(",")}]`;
+                        try{
+                            JSON.parse(resStr);
+                            GM_setValue("cx_ai_result",resStr+"|_|"+Date.now());
+                            setSta("答案抓取完成","#67C23A");
+                        }catch(e){
+                            setSta("答案格式错误","#F56C6C");
+                        }
+                    }
+                }else{
+                    stable = 0;
+                    lastTxt = nowTxt;
+                }
+            },400);
+        }
+    }
+})();
