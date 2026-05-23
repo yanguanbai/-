@@ -2,6 +2,7 @@
 // @name         学习通豆包全自动答题
 // @namespace    com.chaoxing.doubao.auto
 // @version      1.0.0
+// @author       Bart
 // @description  修正答案错乱、增加文字/截图按钮、适配SPA自动重载
 // @match        *://*mooc1-api.chaoxing.com/mooc-ans*
 // @match        *://*.doubao.com/*
@@ -18,18 +19,20 @@
     const win = unsafeWindow;
 
     // --- SPA 监听与初始化逻辑 ---
+    // 监听 URL 变化，解决单页应用（SPA）不触发页面刷新导致脚本失效的问题
     let lastUrl = location.href;
     new MutationObserver(() => {
         if (location.href !== lastUrl) {
             lastUrl = location.href;
-            setTimeout(checkAndInit, 1000); // 延迟执行，等待页面渲染
+            setTimeout(checkAndInit, 1000); // 页面变动后延迟1秒初始化，等待 DOM 渲染完成
         }
     }).observe(document.body, { childList: true, subtree: true });
 
     checkAndInit();
 
+    // 根据当前域名选择运行哪个模块
     function checkAndInit() {
-        // 清理旧的 UI，防止重复渲染
+        // 清理旧的 UI 元素，防止重复注入
         const oldBox = document.querySelector('#ai-box');
         if (oldBox) oldBox.remove();
 
@@ -49,6 +52,7 @@
         createUI();
         listenAnswer();
 
+        // 创建悬浮窗界面
         function createUI() {
             const box = document.createElement('div');
             box.id = 'ai-box';
@@ -68,6 +72,7 @@
             statusDiv = document.getElementById('status');
             autoNextCheckbox = document.getElementById('autoNext');
 
+            // 按钮点击事件绑定
             document.getElementById('btn-init').onclick = () => {
                 setStatus("初始化中...", "#409EFF");
                 GM_setValue("cx_ai_result", "");
@@ -77,6 +82,7 @@
             document.getElementById('btn-send-img').onclick = () => sendImg();
         }
 
+        // 更新状态提示
         function setStatus(text, color = "#666") {
             if(statusDiv) {
                 statusDiv.innerText = text;
@@ -84,11 +90,13 @@
             }
         }
 
+        // 获取页面内所有题目元素
         function getAllQuestions() {
             const items = Array.from(document.querySelectorAll('.questionLi'));
             return items.sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
         }
 
+        // 获取文字并发送给豆包
         function sendText() {
             GM_setValue("cx_ai_result", "");
             const wrap = document.querySelector('.exam-content') || document.body;
@@ -101,6 +109,7 @@
             }
         }
 
+        // 截图并转换为 Base64 发送给豆包
         async function sendImg() {
             GM_setValue("cx_ai_result", "");
             const wrap = document.querySelector('.exam-content') || document.body;
@@ -114,10 +123,12 @@
             }
         }
 
+        // 通过 GM_setValue 发送信号给豆包端脚本
         function sendSignal(data) {
             GM_setValue("cx_ai_signal", JSON.stringify({...data, ts: Date.now()}));
         }
 
+        // 监听豆包端返回的答案
         function listenAnswer() {
             GM_addValueChangeListener("cx_ai_result", (_, oldVal, val) => {
                 if(!val || val === oldVal) return;
@@ -127,10 +138,12 @@
                     const quesList = getAllQuestions();
                     answers.forEach((ans, idx) => {
                         if(ans.intercept) return;
+                        // 逐个填写答案，防止过快导致 UI 卡顿
                         setTimeout(()=>{
                             if(quesList[idx]) fillAns(ans, quesList[idx]);
                         }, idx * 1200);
                     });
+                    // 执行自动下一题
                     if(autoNextCheckbox.checked) setTimeout(nextQuestion, answers.length*1200+2000);
                 }catch(e){
                     setStatus("答案解析异常","#F56C6C");
@@ -138,9 +151,11 @@
             });
         }
 
+        // 将 AI 解析出的答案填入页面
         function fillAns(res, block) {
             const type = res.type + "";
             const ansArr = res.answer || [];
+            // 处理单选、多选、判断
             if(["0","1","3"].includes(type)){
                 const opts = block.querySelectorAll("span.num_option");
                 ansArr.forEach(target=>{
@@ -155,7 +170,9 @@
                     });
                 });
                 setStatus(`已选${ansArr.join("")}`,"#67C23A");
-            } else if(["2","4"].includes(type)){
+            } 
+            // 处理简答题
+            else if(["2","4"].includes(type)){
                 const content = ansArr.join("\n");
                 const ue = win.UE;
                 const textarea = block.querySelector('textarea[id^="answer"]');
@@ -179,6 +196,7 @@
             }
         }
 
+        // 自动触发下一题按钮
         function nextQuestion() {
             document.activeElement?.blur();
             const btn = document.querySelector(".nextBtn,.nextChapter") || [...document.querySelectorAll("button,a")].find(el=>/下一/.test(el.innerText));
@@ -199,6 +217,7 @@
         createPanel();
         listenMsg();
 
+        // 创建豆包端监控面板
         function createPanel() {
             const p = document.createElement("div");
             p.style = "position:fixed;bottom:10px;right:10px;z-index:999999;padding:10px;background:#fff;border:2px solid #409EFF;border-radius:6px;font-size:12px;width:240px;";
@@ -210,6 +229,7 @@
                 alert("绑定成功，刷新生效");
             };
         }
+        
         function setSta(text,color="#409EFF"){
             if(statusDom) {
                 statusDom.innerText = "● "+text;
@@ -220,6 +240,8 @@
         function getInputBox(){
             return document.querySelector('textarea.semi-input-textarea')||document.querySelector('textarea[placeholder="发消息..."]');
         }
+        
+        // 强制写入输入框逻辑
         function writeText(el,txt){
             const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set;
             set.call(el,txt);
@@ -227,10 +249,12 @@
             el.dispatchEvent(new Event("change",{bubbles:true}));
             return true;
         }
+        
         function getSendBtn(){
             return document.querySelector('button[aria-label="send"]')||document.getElementById("flow-end-msg-send");
         }
 
+        // 监听来自学习通的信号
         function listenMsg(){
             GM_addValueChangeListener("cx_ai_signal",(_,__,val)=>{
                 if(!val)return;
@@ -238,6 +262,7 @@
             });
         }
 
+        // 处理核心逻辑：根据信号执行（初始化、传图片、传文字）
         async function handleMsg(data){
             if(isWait)return;
             isWait = true;
@@ -245,6 +270,8 @@
             const input = getInputBox();
             if(!input){isWait=false;setSta("无输入框","#F56C6C");return;}
             let ok = false;
+            
+            // 类型判断
             if(data.type === "init"){
                 setSta("加载答题规则");
                 const rule = `严格按要求作答：\n1.仅输出JSON，无多余文字符号\n2.单选0 多选1 填空2 判断3 简答4\n3.一题单独一条JSON，严格从上到下顺序输出\n4.标准格式{"type":"0","answer":["B"]}\n5.不会作答输出{"intercept":true}`;
@@ -266,6 +293,8 @@
                 ok = writeText(input,data.data);
             }
             if(!ok){isWait=false;setSta("录入失败","#F56C6C");return;}
+            
+            // 自动点击发送按钮
             setTimeout(()=>{
                 const sendBtn = getSendBtn();
                 if(sendBtn){sendBtn.disabled=false;sendBtn.click();setSta("AI解析答题");startCatch();}
@@ -273,6 +302,7 @@
             },1500);
         }
 
+        // 持续轮询获取 AI 输出的答案
         function startCatch(){
             clearInterval(pollTimer);
             let lastTxt = "", stable = 0;
@@ -282,7 +312,7 @@
                 const nowTxt = box.innerText.trim();
                 if(nowTxt === lastTxt && nowTxt){
                     stable++;
-                    if(stable >= 18){
+                    if(stable >= 18){ // 判定 AI 回复完成
                         clearInterval(pollTimer);
                         clearTimeout(watchDog);
                         isWait = false;
