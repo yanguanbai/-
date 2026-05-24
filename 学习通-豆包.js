@@ -4,7 +4,7 @@
 // @version      1.0.0
 // @author       Bart
 // @description  修正答案错乱、增加文字/截图按钮、适配SPA自动重载
-// @match        *://*mooc1-api.chaoxing.com/mooc-ans*
+// @match        *://*.chaoxing.com/mooc-ans*
 // @match        *://*.doubao.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
