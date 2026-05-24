@@ -170,7 +170,7 @@
                     });
                 });
                 setStatus(`已选${ansArr.join("")}`,"#67C23A");
-            } 
+            }
             // 处理简答题
             else if(["2","4"].includes(type)){
                 const content = ansArr.join("\n");
@@ -228,8 +228,12 @@
                 GM_setValue("cx_exclusive_url",location.href);
                 alert("绑定成功，刷新生效");
             };
+
+            // 按钮点击触发手动抓取
+            document.getElementById('bindBtn').insertAdjacentHTML('afterend', '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
+            document.getElementById('catch-btn').onclick = doCatchAnswer;
         }
-        
+
         function setSta(text,color="#409EFF"){
             if(statusDom) {
                 statusDom.innerText = "● "+text;
@@ -240,7 +244,7 @@
         function getInputBox(){
             return document.querySelector('textarea.semi-input-textarea')||document.querySelector('textarea[placeholder="发消息..."]');
         }
-        
+
         // 强制写入输入框逻辑
         function writeText(el,txt){
             const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set;
@@ -249,7 +253,7 @@
             el.dispatchEvent(new Event("change",{bubbles:true}));
             return true;
         }
-        
+
         function getSendBtn(){
             return document.querySelector('button[aria-label="send"]')||document.getElementById("flow-end-msg-send");
         }
@@ -270,11 +274,11 @@
             const input = getInputBox();
             if(!input){isWait=false;setSta("无输入框","#F56C6C");return;}
             let ok = false;
-            
+
             // 类型判断
             if(data.type === "init"){
                 setSta("加载答题规则");
-                const rule = `严格按要求作答：\n1.仅输出JSON，无多余文字符号\n2.单选0 多选1 填空2 判断3 简答4\n3.一题单独一条JSON，严格从上到下顺序输出\n4.标准格式{"type":"0","answer":["B"]}\n5.不会作答输出{"intercept":true}`;
+                const rule = `严格按要求作答：\n1.仅输出JSON，无多余文字符号\n2.单选0 多选1 填空2 判断3 简答4\n3.一题单独一条JSON，严格从上到下顺序输出\n4.标准格式{"type":"0","answer":["B"]}\n5.不会作答输出{"intercept":true}\n６.２，４回答的换行符要按照ＨＴＭＬ的＜ｐ＞`;
                 ok = writeText(input,rule);
             }else if(data.type === "img"){
                 setSta("识别图片题目");
@@ -293,13 +297,32 @@
                 ok = writeText(input,data.data);
             }
             if(!ok){isWait=false;setSta("录入失败","#F56C6C");return;}
-            
+
             // 自动点击发送按钮
             setTimeout(()=>{
                 const sendBtn = getSendBtn();
                 if(sendBtn){sendBtn.disabled=false;sendBtn.click();setSta("AI解析答题");startCatch();}
                 else{isWait=false;setSta("发送失败","#F56C6C");}
             },1500);
+        }
+
+
+        // 抽取公共抓取方法
+        function doCatchAnswer() {
+            const box = document.querySelector(".flow-markdown-body,.markdown-body");
+            if(!box) return false;
+            const nowTxt = box.innerText.trim();
+            const jsArr = nowTxt.match(/\{[^{}]*\}/g)?.filter(v=>v.includes('"type"'))||[];
+            const resStr = `[${jsArr.join(",")}]`;
+            try{
+                JSON.parse(resStr);
+                GM_setValue("cx_ai_result",resStr+"|_|"+Date.now());
+                setSta("手动抓取完成","#67C23A");
+                return true;
+            }catch(e){
+                setSta("答案格式错误","#F56C6C");
+                return false;
+            }
         }
 
         // 持续轮询获取 AI 输出的答案
@@ -316,15 +339,7 @@
                         clearInterval(pollTimer);
                         clearTimeout(watchDog);
                         isWait = false;
-                        const jsArr = nowTxt.match(/\{[^{}]*\}/g)?.filter(v=>v.includes('"type"'))||[];
-                        const resStr = `[${jsArr.join(",")}]`;
-                        try{
-                            JSON.parse(resStr);
-                            GM_setValue("cx_ai_result",resStr+"|_|"+Date.now());
-                            setSta("答案抓取完成","#67C23A");
-                        }catch(e){
-                            setSta("答案格式错误","#F56C6C");
-                        }
+                        doCatchAnswer();
                     }
                 }else{
                     stable = 0;
