@@ -113,11 +113,17 @@
         async function sendImg() {
             GM_setValue("cx_ai_result", "");
             const wrap = document.querySelector('.exam-content') || document.body;
-            setStatus("截图处理中...", "#409EFF");
+            setStatus("高清截图处理中...", "#409EFF");
             try {
-                const canvas = await html2canvas(wrap, { useCORS: true, allowTaint: true, scale: 1 });
+                // scale调高放大分辨率，dpi提升清晰度
+                const canvas = await html2canvas(wrap, {
+                    useCORS: true,
+                    allowTaint: false,
+                    scale: 2.5,    // 放大倍率，数值越大图越清晰
+                    dpi: 300
+                });
                 sendSignal({ type: "img", data: canvas.toDataURL('image/png') });
-                setStatus("截图已发送", "#67C23A");
+                setStatus("高清截图已发送", "#67C23A");
             } catch (e) {
                 setStatus("截图失败", "#F56C6C");
             }
