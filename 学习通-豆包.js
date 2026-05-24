@@ -319,64 +319,63 @@
         }
 
 
-        // 抽取公共抓取方法 —— 无限点击 + 强制覆盖 + 强制刷新
+
+        // 无限次手动抓取 —— 修复大数溢出，永远抓最新
         function doCatchAnswer() {
-            // 1. 找到所有带 message-id 的消息块
+            setSta("⏳ 手动抓取中...", "#E6A23C");
+
+            // 每次点击都重新获取全部消息，绝不缓存
             const allMessages = document.querySelectorAll('div[data-message-id]');
             if (!allMessages.length) {
-                setSta("未找到消息", "#F56C6C");
+                setTimeout(() => setSta("❌ 未找到对话消息", "#F56C6C"), 400);
                 return false;
             }
 
-            // 2. 找出 id 最大的 = 最新消息
-            let latestMsg = null;
-            let maxId = 0;
-            allMessages.forEach(el => {
-                const id = parseInt(el.getAttribute('data-message-id'));
-                if (!isNaN(id) && id > maxId) {
-                    maxId = id;
-                    latestMsg = el;
-                }
-            });
+            // 永远取最后一条 = 最新的
+            let latestMsg = allMessages[allMessages.length - 1];
 
             if (!latestMsg) {
-                setSta("未找到最新消息", "#F56C6C");
+                setTimeout(() => setSta("❌ 找不到最新消息", "#F56C6C"), 400);
                 return false;
             }
 
-            // 3. 读取最新内容
             const nowTxt = latestMsg.innerText.trim();
             const jsArr = nowTxt.match(/\{[^{}]*\}/g)?.filter(v => v.includes('"type"') || v.includes('"intercept"')) || [];
             const resStr = `[${jsArr.join(",")}]`;
 
             try {
                 JSON.parse(resStr);
+                const unique = Date.now() + "_" + Math.random();
+                GM_setValue("cx_ai_result", resStr + "|_|" + unique);
 
-                // ==============================================
-                // 【核心】每次都强制覆盖 + 强制让学习通重新读取
-                // ==============================================
-                GM_setValue("cx_ai_result", resStr + "|_|" + Date.now() + "|manual=" + Math.random());
-
-                // 强制解锁，允许无限点击
                 isWait = false;
                 clearInterval(pollTimer);
                 clearTimeout(watchDog);
 
-                setSta("✅ 最新答案已强制覆盖", "#67C23A");
+                setTimeout(() => setSta("✅ 已获取最新答案", "#67C23A"), 500);
                 return true;
             } catch (e) {
-                setSta("格式错误", "#F56C6C");
+                setTimeout(() => setSta("❌ 答案格式错误", "#F56C6C"), 500);
                 return false;
             }
         }
         // 持续轮询获取 AI 输出的答案
         function startCatch() {
             clearInterval(pollTimer);
-            let lastTxt = "", stable = 0;
+            let lastTxt = "";
+            let stable = 0;
+
             pollTimer = setInterval(() => {
-                const box = document.querySelector(".flow-markdown-body,.markdown-body");
-                if (!box) return;
-                const nowTxt = box.innerText.trim();
+                // 每次都重新查全部消息
+                const allMessages = document.querySelectorAll('div[data-message-id]');
+                if (!allMessages.length) return;
+
+                // 直接取最后一条，不比较ID，不缓存
+                const latestMsg = allMessages[allMessages.length - 1];
+                if (!latestMsg) return;
+
+                const nowTxt = latestMsg.innerText.trim();
+
                 if (nowTxt === lastTxt && nowTxt) {
                     stable++;
                     if (stable >= 18) {
