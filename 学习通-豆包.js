@@ -89,41 +89,37 @@
             return Array.from(document.querySelectorAll('.questionLi'))
                 .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
         }
-        function isQuestionAnswered(block) {
-            if (!block) return false;
-            const type = block.getAttribute("typename") || "";
+  function isQuestionAnswered(block) {
+    if (!block) return false;
+    const type = block.getAttribute("typename") || "";
 
-            // 单选、多选、判断题
-            if (type.includes("单选") || type.includes("多选") || type.includes("判断")) {
-                // 改用 包含匹配 排除 answertype，完美适配当前DOM
-                const answerInput = block.querySelector(
-                    'input[type="hidden"][name^="answer"]:not([name*="answertype"])'
-                );
-                // 元素存在 且 去除空格后不为空 = 已作答
-                return answerInput && answerInput.value.trim() !== "";
+    // 单选 / 多选 / 判断
+    if (type.includes("单选") || type.includes("多选") || type.includes("判断")) {
+        const inputs = block.querySelectorAll('input[type="hidden"]');
+        let targetVal = "";
+        for (let inp of inputs) {
+            if (inp.name.startsWith("answer") && !inp.name.includes("answertype")) {
+                targetVal = inp.value;
+                break;
             }
-
-            // 填空题、简答题
-            if (type.includes("填空") || type.includes("简答")) {
-                const textarea = block.querySelector('textarea[name^="answer"]');
-                if (!textarea) return false;
-
-                try {
-                    const editor = UE.getEditor(textarea.id);
-                    if (editor && editor.readyState === "ready") {
-                        editor.sync();
-                    }
-                } catch (e) {}
-
-                const cleanText = textarea.value
-                .replace(/<[^>]+>/g, '')
-                .replace(/&nbsp;/g, ' ')
-                .trim();
-                return cleanText !== "";
-            }
-
-            return false;
         }
+        return targetVal.replace(/\s/g, "") !== "";
+    }
+
+    // 填空 / 简答：只读原生值，删除 UE 相关同步代码，杜绝阻塞
+    if (type.includes("填空") || type.includes("简答")) {
+        const textarea = block.querySelector('textarea[name^="answer"]');
+        if (!textarea) return false;
+        const cleanText = textarea.value
+            .replace(/<[^>]+>/g, "")
+            .replace(/&nbsp;/g, " ")
+            .replace(/\s/g, "")
+            .trim();
+        return cleanText !== "";
+    }
+
+    return false;
+}
         function sendText() {
             GM_setValue("cx_ai_result","");
             const wrap = document.querySelector('.exam-content')||document.body;
@@ -158,47 +154,95 @@
             GM_setValue("cx_ai_signal",JSON.stringify({...data,ts:Date.now()}));
         }
 
-        function listenAnswer() {
-            GM_addValueChangeListener("cx_ai_result", (_, oldVal, val) => {
-                if (!val || val === oldVal) return;
-                const [raw] = val.split("|_|");
-                try {
-                    const answers = JSON.parse(raw);
-                    const quesList = getAllQuestions();
-                    let delay = 0;
+ function listenAnswer() {
+    GM_addValueChangeListener("cx_ai_result", (_, oldVal, val) => {
+        if (!val || val === oldVal) return;
+        const [raw] = val.split("|_|");
+        try {
+            const answers = JSON.parse(raw);
+            setStatus(`【初始】总答案数：${answers.length}`, "#409EFF");
+            let currentIndex = 0;
 
-                    answers.forEach((ans, idx) => {
-                        const currentQues = quesList[idx];
-                        if (!currentQues) return;
-
-                        setTimeout(() => {
-                            try {
-                                // 开启跳过且已作答 → 直接终止，不重复填写
-                                if (skipFilled.checked && isQuestionAnswered(currentQues)) {
-                                    setStatus(`✅ 第${idx+1}题已作答，自动跳过`, "#67C23A");
-                                    return;
-                                }
-                                if (ans.intercept) {
-                                    setStatus(`⚠️ 第${idx+1}题无法作答，跳过`, "#E6A23C");
-                                    return;
-                                }
-                                fillAns(ans, currentQues);
-                                setStatus(`📝 第${idx+1}题已填写`, "#409EFF");
-                            } catch (e) {
-                                setStatus(`❌ 第${idx+1}题填写失败，自动跳过`, "#F56C6C");
-                            }
-                        }, delay);
-                        delay += 1200;
-                    });
-
-                    if (autoNextCheckbox.checked) {
-                        setTimeout(nextQuestion, delay + 2000);
-                    }
-                } catch (e) {
-                    setStatus("❌ 答案解析异常", "#F56C6C");
+            // 单页处理逻辑
+            function handlePage() {
+                // 所有答案处理完毕，结束流程
+                if (currentIndex >= answers.length) {
+                    setStatus("【结束】全部题目处理完成", "#67C23A");
+                    if (autoNextCheckbox.checked) nextQuestion();
+                    return;
                 }
-            });
+
+                const pageQues = getAllQuestions();
+                const pageLen = pageQues.length;
+                setStatus(`【当前页】DOM题目数：${pageLen}，已处理到：${currentIndex}`, "#409EFF");
+
+                // 当前页面无题目，直接结束
+                if (pageLen === 0) {
+                    setStatus("【终止】页面无题目", "#F56C6C");
+                    return;
+                }
+
+                let pageIdx = 0;
+                // 串行处理当前页每一题
+                function handleOneInPage() {
+                    // 当前页处理完，执行翻页
+                    if (pageIdx >= pageLen) {
+                        setStatus("【翻页】当前页处理完毕，切换下一页", "#409EFF");
+                        if (autoNextCheckbox.checked) {
+                            nextQuestion();
+                        }
+                        // 翻页后延迟，再处理下一批答案
+                        setTimeout(handlePage, 2000);
+                        return;
+                    }
+
+                    const globalIdx = currentIndex;
+                    const localIdx = pageIdx;
+                    const ans = answers[globalIdx];
+                    const curQ = pageQues[localIdx];
+
+                    setStatus(`【处理】全局${globalIdx+1} / 本页${localIdx+1}`, "#409EFF");
+
+                    // 单题超时兜底
+                    const guard = setTimeout(() => {
+                        setStatus(`【超时】第${globalIdx+1}题跳过`, "#E6A23C");
+                        currentIndex++;
+                        pageIdx++;
+                        setTimeout(handleOneInPage, 800);
+                    }, 2500);
+
+                    setTimeout(() => {
+                        clearTimeout(guard);
+                        try {
+                            if (skipFilled.checked && isQuestionAnswered(curQ)) {
+                                setStatus(`【跳过】第${globalIdx+1}题已作答`, "#67C23A");
+                            } else if (ans.intercept) {
+                                setStatus(`【跳过】第${globalIdx+1}题标记忽略`, "#E6A23C");
+                            } else {
+                                fillAns(ans, curQ);
+                                setStatus(`【完成】第${globalIdx+1}题填写成功`, "#67C23A");
+                            }
+                        } catch (e) {
+                            setStatus(`【报错】第${globalIdx+1}题：${e.message}`, "#F56C6C");
+                        }
+                        // 索引自增
+                        currentIndex++;
+                        pageIdx++;
+                        setTimeout(handleOneInPage, 800);
+                    }, 200);
+                }
+
+                // 启动本页处理
+                handleOneInPage();
+            }
+
+            // 开始执行
+            handlePage();
+        } catch (e) {
+            setStatus(`【顶层错误】${e.message}`, "#F56C6C");
         }
+    });
+}
 
         function fillAns(res, block) {
             const type = res.type + "";
