@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通豆包全自动答题
 // @namespace    com.chaoxing.doubao.auto
-// @version      1.3.3
+// @version      1.4.0
 // @author       Bart
 // @description  修正选择器，匹配实际DOM结构，正常检测选择题已答状态
 // @match        *://*.chaoxing.com/mooc-ans*
