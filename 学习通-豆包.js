@@ -39,13 +39,13 @@
         let statusDiv, autoNextCheckbox, skipFilled;
         createUI();
         listenAnswer();
-// 实时监测答案变化（真正实时）
-setInterval(() => {
-    window.lastCheck = window.lastCheck || 0;
-    if (Date.now() - window.lastCheck > 200) {
-        window.lastCheck = Date.now();
-    }
-}, 200);
+        // 实时监测答案变化（真正实时）
+        setInterval(() => {
+            window.lastCheck = window.lastCheck || 0;
+            if (Date.now() - window.lastCheck > 200) {
+                window.lastCheck = Date.now();
+            }
+        }, 200);
         function createUI() {
             const box = document.createElement('div');
             box.id = 'ai-box';
@@ -89,18 +89,41 @@ setInterval(() => {
             return Array.from(document.querySelectorAll('.questionLi'))
                 .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
         }
+        function isQuestionAnswered(block) {
+            if (!block) return false;
+            const type = block.getAttribute("typename") || "";
 
-function isQuestionAnswered(block) {
-    if (!block) return false;
-    // 精准匹配当前题目下，name 以 "answer" 开头但不是 "answertype" 的隐藏答案框
-    const hiddenAnswer = block.querySelector(
-        'input[type="hidden"][name^="answer"]:not([name^="answertype"])'
-    );
-    if (!hiddenAnswer) return false;
-    // 判断是否有有效答案（非空）
-    const val = hiddenAnswer.value.trim();
-    return val !== "";
-}
+            // 单选、多选、判断题
+            if (type.includes("单选") || type.includes("多选") || type.includes("判断")) {
+                // 改用 包含匹配 排除 answertype，完美适配当前DOM
+                const answerInput = block.querySelector(
+                    'input[type="hidden"][name^="answer"]:not([name*="answertype"])'
+                );
+                // 元素存在 且 去除空格后不为空 = 已作答
+                return answerInput && answerInput.value.trim() !== "";
+            }
+
+            // 填空题、简答题
+            if (type.includes("填空") || type.includes("简答")) {
+                const textarea = block.querySelector('textarea[name^="answer"]');
+                if (!textarea) return false;
+
+                try {
+                    const editor = UE.getEditor(textarea.id);
+                    if (editor && editor.readyState === "ready") {
+                        editor.sync();
+                    }
+                } catch (e) {}
+
+                const cleanText = textarea.value
+                .replace(/<[^>]+>/g, '')
+                .replace(/&nbsp;/g, ' ')
+                .trim();
+                return cleanText !== "";
+            }
+
+            return false;
+        }
         function sendText() {
             GM_setValue("cx_ai_result","");
             const wrap = document.querySelector('.exam-content')||document.body;
@@ -233,7 +256,7 @@ function isQuestionAnswered(block) {
         function nextQuestion() {
             document.activeElement?.blur();
             const btn = document.querySelector(".nextBtn,.nextChapter")
-                || [...document.querySelectorAll("button,a")].find(el => /下一/.test(el.innerText));
+            || [...document.querySelectorAll("button,a")].find(el => /下一/.test(el.innerText));
             btn?.click();
         }
     }
@@ -260,7 +283,7 @@ function isQuestionAnswered(block) {
                 alert("绑定成功，刷新页面生效");
             };
             document.getElementById('bindBtn').insertAdjacentHTML('afterend',
-                '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
+                                                                  '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
             document.getElementById('catch-btn').onclick = doCatchAnswer;
         }
 
@@ -273,7 +296,7 @@ function isQuestionAnswered(block) {
 
         function getInputBox() {
             return document.querySelector('textarea.semi-input-textarea')
-                || document.querySelector('textarea[placeholder="发消息..."]');
+            || document.querySelector('textarea[placeholder="发消息..."]');
         }
         function writeText(el, txt) {
             const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
@@ -284,7 +307,7 @@ function isQuestionAnswered(block) {
         }
         function getSendBtn() {
             return document.querySelector('button[aria-label="send"]')
-                || document.getElementById("flow-end-msg-send");
+            || document.getElementById("flow-end-msg-send");
         }
 
         function listenMsg() {
