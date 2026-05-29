@@ -102,6 +102,15 @@
             autoNextCheckbox = document.getElementById('autoNext');
             skipFilled = document.getElementById('skipFilled');
 
+            // 读取本地记录，恢复上次勾选状态
+            const savedSkip = GM_getValue("skipFilled_state", false);
+            skipFilled.checked = savedSkip;
+            // 勾选状态改变时，实时保存到本地
+            skipFilled.addEventListener("change", () => {
+                GM_setValue("skipFilled_state", skipFilled.checked);
+            });
+
+
             // 按钮点击事件
             document.getElementById('btn-init').onclick = () => {
                 setStatus("初始化中...", "#409EFF");
@@ -166,10 +175,10 @@
                 if (!textarea) return false;
                 // 清理HTML标签、空格、占位符
                 const cleanText = textarea.value
-                    .replace(/<[^>]+>/g, "")
-                    .replace(/&nbsp;/g, " ")
-                    .replace(/\s/g, "")
-                    .trim();
+                .replace(/<[^>]+>/g, "")
+                .replace(/&nbsp;/g, " ")
+                .replace(/\s/g, "")
+                .trim();
                 return cleanText !== "";
             }
 
@@ -418,7 +427,7 @@
             document.activeElement?.blur(); // 失焦当前输入框
             // 匹配常规下一题按钮
             const btn = document.querySelector(".nextBtn,.nextChapter")
-                || [...document.querySelectorAll("button,a")].find(el => /下一/.test(el.innerText));
+            || [...document.querySelectorAll("button,a")].find(el => /下一/.test(el.innerText));
             btn?.click();
         }
     }
@@ -469,7 +478,7 @@
             };
             // 手动抓取答案按钮
             document.getElementById('bindBtn').insertAdjacentHTML('afterend',
-                '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
+                                                                  '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
             document.getElementById('catch-btn').onclick = doCatchAnswer;
         }
 
@@ -491,7 +500,7 @@
          */
         function getInputBox() {
             return document.querySelector('textarea.semi-input-textarea')
-                || document.querySelector('textarea[placeholder="发消息..."]');
+            || document.querySelector('textarea[placeholder="发消息..."]');
         }
 
         /**
@@ -514,7 +523,7 @@
          */
         function getSendBtn() {
             return document.querySelector('button[aria-label="send"]')
-                || document.getElementById("flow-end-msg-send");
+            || document.getElementById("flow-end-msg-send");
         }
 
         /**
@@ -559,8 +568,7 @@
 示例：{"type":"1","answer":["B","C"]}
 3.判断题{"type":"3","answer":["正确/错误"]}
 示例：{"type":"3","answer":["A"]}
-注意:有时候判断题也是选择题,根据图片和题目来判断到底是回答选择题还是正确错误
-判断题只要不是填空且有选项就按照单选题回答
+注意:判断题只要不是填空,就按照单选题回答
 4.填空题{"type":"2","answer":["填写内容"]}
 示例：{"type":"2","answer":["123"]}
 5.简答题{"type":"4","answer":["作答文字"]}
