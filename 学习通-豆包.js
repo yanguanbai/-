@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通豆包全自动答题
 // @namespace    com.chaoxing.doubao.auto
-// @version      1.4.0
+// @version      1.5.0
 // @author       Bart
 // @description  学习通 + 豆包 双向联动全自动答题脚本，支持文字/截图答题、跳过已答题目、自动下一题
 // @match        *://*.chaoxing.com/mooc-ans*
@@ -55,6 +55,90 @@
         }
     }
 
+    /**
+     * 辅助函数：使元素具备质感的拖拽与吸附弹性能力
+     * @param {HTMLElement} el 拖拽目标元素
+     * @param {string} storageKey 本地存储位置的key
+     * @param {object} defaultPos 默认位置 {top, left, right, bottom}
+     */
+    function makeElementDraggableAndSnappable(el, storageKey, defaultPos) {
+        let isDragging = false;
+        let startX, startY, initialX, initialY;
+
+        // 样式初始化准备
+        el.style.transition = 'none';
+
+        // 读取历史缓存位置或应用默认合适位置
+        const savedPos = GM_getValue(storageKey, null);
+        if (savedPos) {
+            if (savedPos.left !== undefined) el.style.left = savedPos.left + 'px';
+            if (savedPos.top !== undefined) el.style.top = savedPos.top + 'px';
+        } else {
+            Object.keys(defaultPos).forEach(k => el.style[k] = defaultPos[k]);
+        }
+
+        // 鼠标按下事件
+        el.addEventListener('mousedown', (e) => {
+            // 如果点在按钮或复选框上，不触发拖拽
+            if (['BUTTON', 'INPUT', 'SPAN', 'LABEL'].includes(e.target.tagName)) return;
+            isDragging = true;
+            el.style.transition = 'none'; // 拖拽时关闭过渡动画
+
+            const rect = el.getBoundingClientRect();
+            initialX = rect.left;
+            initialY = rect.top;
+            startX = e.clientX;
+            startY = e.clientY;
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            e.preventDefault();
+        });
+
+        function onMouseMove(e) {
+            if (!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            let x = initialX + dx;
+            let y = initialY + dy;
+
+            // 越界边界安全限制
+            x = Math.max(0, Math.min(x, window.innerWidth - el.offsetWidth));
+            y = Math.max(0, Math.min(y, window.innerHeight - el.offsetHeight));
+
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+        }
+
+        function onMouseUp() {
+            if (!isDragging) return;
+            isDragging = false;
+
+            // 弹性吸附机制 (Spring Snapping)
+            el.style.transition = 'all 0.5s cubic-bezier(0.19, 1, 0.22, 1)';
+
+            const rect = el.getBoundingClientRect();
+            const centerX = rect.left + el.offsetWidth / 2;
+            let finalX = rect.left;
+
+            // 左右自动吸附贴边，预留16px的优雅呼吸间距
+            if (centerX < window.innerWidth / 2) {
+                finalX = 16;
+            } else {
+                finalX = window.innerWidth - el.offsetWidth - 16;
+            }
+
+            el.style.left = finalX + 'px';
+
+            // 实时保存位置状态
+            GM_setValue(storageKey, { left: finalX, top: rect.top });
+
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        }
+    }
+
     // ===================== 学习通 答题端 逻辑开始 =====================
     /**
      * 学习通页面初始化
@@ -75,27 +159,68 @@
          * 包含：初始化规则、发送文字、发送截图、功能勾选框、状态提示
          */
         function createUI() {
+            // 注入苹果风格统一全局CSS样式
+            const style = document.createElement('style');
+            style.innerHTML = `
+                .apple-panel {
+                    position: fixed; z-index: 9999999; width: 240px; padding: 16px;
+                    background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                    border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 18px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.08), inset 0 1px 1px rgba(255,255,255,0.2);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    cursor: grab; user-select: none; box-sizing: border-box;
+                }
+                .apple-panel:active { cursor: grabbing; }
+                .apple-title { font-size: 14px; font-weight: 600; color: #1d1d1f; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+                .apple-btn {
+                    width: 100%; padding: 8px 12px; margin-bottom: 8px; font-size: 12px; font-weight: 500;
+                    border: none; border-radius: 10px; cursor: pointer; transition: all 0.2s ease;
+                    display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+                }
+                .apple-btn:active { transform: scale(0.97); filter: brightness(0.9); }
+                .btn-warn { background: #ff9500; color: white; }
+                .btn-primary { background: #007aff; color: white; }
+                .btn-success { background: #34c759; color: white; }
+
+                .apple-switch-label { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #515154; cursor: pointer; }
+                .apple-switch { position: relative; width: 36px; height: 20px; background: #e9e9ea; border-radius: 10px; transition: background 0.2s; }
+                .apple-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.15); transition: transform 0.2s; }
+                input[type="checkbox"] { display: none; }
+                input[type="checkbox"]:checked + .apple-switch { background: #34c759; }
+                input[type="checkbox"]:checked + .apple-switch::after { transform: translateX(16px); }
+
+                .apple-status { margin-top: 14px; padding: 8px 10px; background: rgba(0,0,0,0.03); border-radius: 8px; font-size: 11px; line-height: 1.4; color: #86868b; word-break: break-all; text-align: center;}
+            `;
+            document.head.appendChild(style);
+
             const box = document.createElement('div');
             box.id = 'ai-box';
-            // 面板样式：固定定位、置顶、高层级、白色背景、边框阴影
-            box.style = "position:fixed;top:10%;left:10px;z-index:9999999;padding:12px;background:#fff;border:2px solid #409EFF;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-family:sans-serif;width:220px;font-size:12px;";
+            box.className = 'apple-panel';
+
             // 面板HTML结构
             box.innerHTML = `
-                <div style="font-weight:bold;margin-bottom:8px;">📗 学习通自动答题</div>
-                <button id="btn-init" style="width:100%;padding:6px;margin-bottom:4px;background:#E6A23C;color:white;border:none;border-radius:4px;">初始化规则</button>
-                <button id="btn-send-txt" style="width:100%;padding:6px;margin-bottom:4px;background:#409EFF;color:white;border:none;border-radius:4px;">发送文字</button>
-                <button id="btn-send-img" style="width:100%;padding:6px;margin-bottom:4px;background:#67C23A;color:white;border:none;border-radius:4px;">发送截图</button>
-                <label style="display:flex;align-items:center;margin-top:6px;">
+                <div class="apple-title">📗 学习通自动答题</div>
+                <button id="btn-init" class="apple-btn btn-warn">初始化规则</button>
+                <button id="btn-send-txt" class="apple-btn btn-primary">发送文字</button>
+                <button id="btn-send-img" class="apple-btn btn-success">发送截图</button>
+
+                <label class="apple-switch-label">
+                    <span>自动下一题</span>
                     <input type="checkbox" id="autoNext" checked>
-                    <span style="margin-left:4px;">自动下一题</span>
+                    <div class="apple-switch"></div>
                 </label>
-                <label style="display:flex;align-items:center;margin-top:4px;">
+                <label class="apple-switch-label">
+                    <span>跳过已答题目</span>
                     <input type="checkbox" id="skipFilled">
-                    <span style="margin-left:4px;">跳过已答题目</span>
+                    <div class="apple-switch"></div>
                 </label>
-                <div id="status" style="margin-top:8px;line-height:1.4;color:#666;">状态：就绪</div>
+                <div id="status" class="apple-status">状态：就绪</div>
             `;
             document.body.appendChild(box);
+
+            // 赋予面板拖拽与吸附能力 (默认出现在页面左上侧)
+            makeElementDraggableAndSnappable(box, "cx_panel_pos", { top: '15%', left: '16px' });
 
             // 绑定DOM元素变量
             statusDiv = document.getElementById('status');
@@ -110,10 +235,9 @@
                 GM_setValue("skipFilled_state", skipFilled.checked);
             });
 
-
             // 按钮点击事件
             document.getElementById('btn-init').onclick = () => {
-                setStatus("初始化中...", "#409EFF");
+                setStatus("初始化中...", "#007aff");
                 GM_setValue("cx_ai_result", ""); // 清空旧答案
                 sendSignal({ type: "init" });     // 发送【初始化规则】指令到豆包
             };
@@ -124,12 +248,13 @@
         /**
          * 修改面板状态文本 + 字体颜色
          * @param {string} text 状态文字
-         * @param {string} color 文字颜色，默认#666
+         * @param {string} color 文字颜色
          */
-        function setStatus(text, color = "#666") {
+        function setStatus(text, color = "#86868b") {
             if (statusDiv) {
                 statusDiv.innerText = text;
                 statusDiv.style.color = color;
+                statusDiv.style.fontWeight = "500";
             }
         }
 
@@ -198,9 +323,9 @@
 
             if (text.length > 0) {
                 sendSignal({ type: "txt", data: text });
-                setStatus("文字已发送", "#409EFF");
+                setStatus("文字已发送", "#007aff");
             } else {
-                setStatus("未获取到文字", "#F56C6C");
+                setStatus("未获取到文字", "#ff3b30");
             }
         }
 
@@ -211,7 +336,7 @@
         async function sendImg() {
             GM_setValue("cx_ai_result", ""); // 清空历史答案
             const wrap = document.querySelector('.exam-content') || document.body;
-            setStatus("高清截图处理中...", "#409EFF");
+            setStatus("高清截图处理中...", "#007aff");
 
             try {
                 // 调用html2canvas绘制高清画布
@@ -223,9 +348,9 @@
                 });
                 // 画布转图片Base64并发送
                 sendSignal({ type: "img", data: canvas.toDataURL('image/png') });
-                setStatus("高清截图已发送", "#67C23A");
+                setStatus("高清截图已发送", "#34c759");
             } catch (e) {
-                setStatus("截图失败", "#F56C6C");
+                setStatus("截图失败", "#ff3b30");
             }
         }
 
@@ -253,7 +378,7 @@
                 try {
                     // 解析答案数组
                     const answers = JSON.parse(raw);
-                    setStatus(`【初始】总答案数：${answers.length}`, "#409EFF");
+                    setStatus(`总答案数：${answers.length}`, "#007aff");
                     let currentIndex = 0; // 全局答案指针（记录处理到第几条答案）
 
                     /**
@@ -263,7 +388,7 @@
                     function handlePage() {
                         // 所有答案全部处理完成，结束流程
                         if (currentIndex >= answers.length) {
-                            setStatus("【结束】全部题目处理完成", "#67C23A");
+                            setStatus("全部题目处理完成", "#34c759");
                             // 开启自动下一题则执行翻页
                             if (autoNextCheckbox.checked) nextQuestion();
                             return;
@@ -272,11 +397,11 @@
                         // 实时获取当前页面所有题目DOM
                         const pageQues = getAllQuestions();
                         const pageLen = pageQues.length;
-                        setStatus(`【当前页】DOM题目数：${pageLen}，已处理到：${currentIndex}`, "#409EFF");
+                        setStatus(`DOM题目:${pageLen} | 处理到:${currentIndex}`, "#007aff");
 
                         // 当前页面无题目，终止
                         if (pageLen === 0) {
-                            setStatus("【终止】页面无题目", "#F56C6C");
+                            setStatus("【终止】页面无题目", "#ff3b30");
                             return;
                         }
 
@@ -289,7 +414,7 @@
                         function handleOneInPage() {
                             // 当前页面所有题目处理完毕 → 翻页
                             if (pageIdx >= pageLen) {
-                                setStatus("【翻页】当前页处理完毕，切换下一页", "#409EFF");
+                                setStatus("正在切换下一页...", "#007aff");
                                 if (autoNextCheckbox.checked) {
                                     nextQuestion();
                                 }
@@ -303,11 +428,11 @@
                             const ans = answers[globalIdx]; // 当前答案
                             const curQ = pageQues[localIdx]; // 当前题目DOM
 
-                            setStatus(`【处理】全局${globalIdx+1} / 本页${localIdx+1}`, "#409EFF");
+                            setStatus(`处理: 全局${globalIdx+1} / 本页${localIdx+1}`, "#007aff");
 
                             // 单题超时兜底：2.5秒无响应则强制跳过，防止卡死
                             const guard = setTimeout(() => {
-                                setStatus(`【超时】第${globalIdx+1}题跳过`, "#E6A23C");
+                                setStatus(`第${globalIdx+1}题超时跳过`, "#ff9500");
                                 currentIndex++;
                                 pageIdx++;
                                 setTimeout(handleOneInPage, 800);
@@ -319,19 +444,19 @@
                                 try {
                                     // 勾选【跳过已答】且题目已作答 → 直接跳过
                                     if (skipFilled.checked && isQuestionAnswered(curQ)) {
-                                        setStatus(`【跳过】第${globalIdx+1}题已作答`, "#67C23A");
+                                        setStatus(`第${globalIdx+1}题已答,跳过`, "#34c759");
                                     }
                                     // 题目标记为拦截（手写/图片模糊/超纲）→ 跳过
                                     else if (ans.intercept) {
-                                        setStatus(`【跳过】第${globalIdx+1}题标记忽略`, "#E6A23C");
+                                        setStatus(`第${globalIdx+1}题忽略`, "#ff9500");
                                     }
                                     // 正常执行答题填充
                                     else {
                                         fillAns(ans, curQ);
-                                        setStatus(`【完成】第${globalIdx+1}题填写成功`, "#67C23A");
+                                        setStatus(`第${globalIdx+1}题填写成功`, "#34c759");
                                     }
                                 } catch (e) {
-                                    setStatus(`【报错】第${globalIdx+1}题：${e.message}`, "#F56C6C");
+                                    setStatus(`报错 ${globalIdx+1}题:${e.message}`, "#ff3b30");
                                 }
                                 // 下标自增，进入下一题
                                 currentIndex++;
@@ -347,7 +472,7 @@
                     // 整体开始执行
                     handlePage();
                 } catch (e) {
-                    setStatus(`【顶层错误】${e.message}`, "#F56C6C");
+                    setStatus(`顶层异常`, "#ff3b30");
                 }
             });
         }
@@ -465,10 +590,41 @@
          * 包含：状态提示、绑定按钮、手动抓取答案按钮
          */
         function createPanel() {
+            // 动态注入豆包专属优雅样式
+            const style = document.createElement('style');
+            style.innerHTML = `
+                .db-apple-panel {
+                    position: fixed; z-index: 999999; padding: 12px 16px;
+                    background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                    border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 16px;
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    display: flex; align-items: center; gap: 10px; cursor: grab; user-select: none;
+                }
+                .db-apple-panel:active { cursor: grabbing; }
+                .db-status-dot { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+                .db-btn {
+                    padding: 5px 12px; font-size: 11px; font-weight: 500; border: none; border-radius: 8px;
+                    cursor: pointer; transition: all 0.2s; background: rgba(0,0,0,0.05); color: #1d1d1f;
+                }
+                .db-btn:hover { background: rgba(0,0,0,0.08); }
+                .db-btn-primary { background: #007aff; color: white; }
+                .db-btn-primary:hover { background: #0066d6; }
+            `;
+            document.head.appendChild(style);
+
             const p = document.createElement("div");
-            p.style = "position:fixed;bottom:10px;right:10px;z-index:999999;padding:10px;background:#fff;border:2px solid #409EFF;border-radius:6px;font-size:12px;width:240px;";
-            p.innerHTML = `<span id="dbSta" style="font-weight:bold;color:#409EFF">● 待命</span><button id="bindBtn" style="margin-left:8px;padding:2px 6px;border:1px solid #ccc;border-radius:3px;">绑定</button>`;
+            p.className = "db-apple-panel";
+            p.innerHTML = `
+                <span id="dbSta" class="db-status-dot" style="color:#007aff">● 待命</span>
+                <button id="bindBtn" class="db-btn">绑定专页</button>
+                <button id="catch-btn" class="db-btn db-btn-primary">手动抓取</button>
+            `;
             document.body.appendChild(p);
+
+            // 赋予面板拖拽与吸附能力 (默认出现在右下角附近)
+            makeElementDraggableAndSnappable(p, "db_panel_pos", { bottom: '24px', right: '24px' });
 
             statusDom = document.getElementById("dbSta");
             // 绑定当前页面为专属通信页面
@@ -477,8 +633,6 @@
                 alert("绑定成功，刷新页面生效");
             };
             // 手动抓取答案按钮
-            document.getElementById('bindBtn').insertAdjacentHTML('afterend',
-                                                                  '<button id="catch-btn" style="margin-left:5px;padding:2px 6px;border:1px solid #409EFF;border-radius:3px;">手动抓取</button>');
             document.getElementById('catch-btn').onclick = doCatchAnswer;
         }
 
@@ -487,7 +641,7 @@
          * @param {string} text 状态文本
          * @param {string} color 字体颜色
          */
-        function setSta(text, color = "#409EFF") {
+        function setSta(text, color = "#007aff") {
             if (statusDom) {
                 statusDom.innerText = "● " + text;
                 statusDom.style.color = color;
@@ -546,20 +700,20 @@
             watchDog = setTimeout(() => {
                 isWait = false;
                 clearInterval(pollTimer);
-                setSta("超时重置", "#F56C6C");
+                setSta("超时重置", "#ff3b30");
             }, 60000);
 
             const input = getInputBox();
             if (!input) {
                 isWait = false;
-                setSta("无输入框", "#F56C6C");
+                setSta("无输入框", "#ff3b30");
                 return;
             }
             let ok = false;
 
             // 1. 初始化答题规则指令
             if (data.type === "init") {
-                setSta("加载答题规则");
+                setSta("加载规则");
                 const rule = `严格按规范输出答案，仅返回JSON格式内容，禁止多余解释、话术、换行修饰
 答题分类与格式标准：
 1.单选题{"type":"0","answer":["选项字母"]}
@@ -583,7 +737,7 @@
             }
             // 2. 图片题目：Base64转图片粘贴到输入框
             else if (data.type === "img") {
-                setSta("识别图片题目");
+                setSta("识别图片");
                 try {
                     const [_, b64] = data.data.split(",");
                     const buf = atob(b64);
@@ -598,14 +752,14 @@
             }
             // 3. 纯文字题目：直接写入输入框
             else {
-                setSta("录入文字题目");
+                setSta("录入文字");
                 ok = writeText(input, data.data);
             }
 
             // 写入失败
             if (!ok) {
                 isWait = false;
-                setSta("录入失败", "#F56C6C");
+                setSta("录入失败", "#ff3b30");
                 return;
             }
 
@@ -615,12 +769,12 @@
                 if (sendBtn) {
                     sendBtn.disabled = false;
                     sendBtn.click();
-                    setSta("AI解析答题");
+                    setSta("解析中...");
                     // 启动轮询，等待AI输出答案
                     startCatch();
                 } else {
                     isWait = false;
-                    setSta("发送失败", "#F56C6C");
+                    setSta("发送失败", "#ff3b30");
                 }
             }, 1500);
         }
@@ -630,16 +784,16 @@
          * @returns {boolean} 抓取是否成功
          */
         function doCatchAnswer() {
-            setSta("⏳ 抓取中...", "#E6A23C");
+            setSta("抓取中...", "#ff9500");
             const allMessages = document.querySelectorAll('div[data-message-id]');
             if (!allMessages.length) {
-                setTimeout(() => setSta("❌ 未找到对话消息", "#F56C6C"), 400);
+                setTimeout(() => setSta("未找见消息", "#ff3b30"), 400);
                 return false;
             }
             // 取最后一条消息（AI最新回复）
             const latestMsg = allMessages[allMessages.length - 1];
             if (!latestMsg) {
-                setTimeout(() => setSta("❌ 找不到最新消息", "#F56C6C"), 400);
+                setTimeout(() => setSta("无最新消息", "#ff3b30"), 400);
                 return false;
             }
             const nowTxt = latestMsg.innerText.trim();
@@ -655,10 +809,10 @@
                 isWait = false;
                 clearInterval(pollTimer);
                 clearTimeout(watchDog);
-                setTimeout(() => setSta("✅ 已获取最新答案", "#67C23A"), 500);
+                setTimeout(() => setSta("已传答案", "#34c759"), 500);
                 return true;
             } catch (e) {
-                setTimeout(() => setSta("❌ 答案格式错误", "#F56C6C"), 400);
+                setTimeout(() => setSta("格式错误", "#ff3b30"), 400);
                 return false;
             }
         }
